@@ -103,7 +103,7 @@ const fallbackClaudeReply = (system, messages) => {
 
   if (lowerSystem.includes("json")) {
     const structured = raw ? `${raw.slice(0, 100)} — 오늘의 돌봄 기록을 간단하고 명확하게 정리했습니다.` : "오늘의 돌봄 기록을 간단하고 명확하게 정리했습니다.";
-    return JSON.stringify({ categories: ["기타"], structured, alert: null });
+    return JSON.stringify({ categories: ["기타"], structured, polished: fallbackPolishedMessage(raw), alert: null });
   }
 
   if (lowerSystem.includes("브리핑")) {
@@ -115,6 +115,19 @@ const fallbackClaudeReply = (system, messages) => {
   }
 
   return "기록을 확인했습니다. 안전과 일상 루틴을 우선으로 점검해 주세요.";
+};
+
+const fallbackPolishedMessage = (raw) => {
+  if (!raw) return "어머니, 안녕하세요. 오늘 전달드릴 특이사항은 없습니다.";
+  const diaper = raw.match(/([가-힣]+?)(?:이|가)\s*오늘\s*(?:기저귀가|기저귀)\s*다\s*떨어졌/);
+  if (diaper) return `어머니, 안녕하세요. ${diaper[1]}이 오늘 사용할 기저귀가 모두 떨어졌습니다. 새 기저귀 한 통 보내주시면 감사하겠습니다.`;
+  const cleaned = raw
+    .replace(/^(야|저기|있잖아)[,\s]*/g, "")
+    .replace(/말해줘|말씀해줘|전해줘/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/[.!?]+$/g, "")
+    .trim();
+  return `어머니, 안녕하세요. ${cleaned}${cleaned.endsWith("요") ? "" : " 관련하여 확인 부탁드립니다"}. 감사합니다.`;
 };
 
 const stripJson = (t) => {
@@ -412,7 +425,40 @@ function Journal({ data, role, save }) {
   const [busy, setBusy] = useState(false);
   const [guardianOnly, setGuardianOnly] = useState(false);
   const [err, setErr] = useState(null);
+  const [listening, setListening] = useState(false);
+  const [voiceError, setVoiceError] = useState(null);
+  const recognitionRef = useRef(null);
   const authorName = { parent: "엄마", teacher: "김선생님", aide: "이지원사님", daycare: "박선생님" }[role];
+
+  const toggleVoice = () => {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Recognition) {
+      setVoiceError("이 브라우저에서는 음성 입력을 지원하지 않아요. Chrome 또는 Edge에서 시도해 주세요.");
+      return;
+    }
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const recognition = new Recognition();
+    recognition.lang = "ko-KR";
+    recognition.interimResults = false;
+    recognition.continuous = false;
+    recognition.onstart = () => { setVoiceError(null); setListening(true); };
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results).map((result) => result[0].transcript).join(" ");
+      setText((current) => `${current}${current ? " " : ""}${transcript}`.trim());
+    };
+    recognition.onerror = (event) => {
+      setListening(false);
+      setVoiceError(event.error === "not-allowed" ? "마이크 사용 권한이 필요해요." : "음성을 듣지 못했어요. 다시 시도해 주세요.");
+    };
+    recognition.onend = () => setListening(false);
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
+
+  useEffect(() => () => recognitionRef.current?.stop(), []);
 
   const addEntry = async () => {
     if (!text.trim() || busy) return;
@@ -420,9 +466,10 @@ function Journal({ data, role, save }) {
     setErr(null);
     try {
       const out = await callClaude(
-        `너는 발달장애 아동 돌봄 기록을 정리하는 도우미다. 돌봄자가 남긴 날것의 메모를 인수인계용으로 정리한다.
+        `너는 발달장애 아동 돌봄 기록을 정리하는 도우미다. 돌봄자가 남긴 날것의 메모를 인수인계용과 보호자에게 보낼 메시지로 각각 정리한다.
 반드시 아래 JSON 형식으로만 응답하라. 다른 텍스트, 마크다운 금지.
-{"categories": ["식사"|"건강"|"행동"|"의사소통"|"수면"|"이동"|"기타" 중 1~3개], "structured": "다른 돌봄자가 읽을 것을 전제로 한 명확한 1~2문장 정리", "alert": "다른 돌봄자가 즉시 주의해야 할 사항이 있으면 한 문장, 없으면 null"}`,
+        {"categories": ["식사"|"건강"|"행동"|"의사소통"|"수면"|"이동"|"기타" 중 1~3개], "structured": "다른 돌봄자가 읽을 것을 전제로 한 명확한 1~2문장 정리", "polished": "보호자에게 바로 보낼 수 있는 따뜻하고 예의 바른 1~3문장 메시지", "alert": "다른 돌봄자가 즉시 주의해야 할 사항이 있으면 한 문장, 없으면 null"}
+        정리 규칙: 말한 사람의 의도와 사실은 바꾸지 않는다. '야', '말해줘' 같은 구어체와 중언부언은 제거한다. 메시지는 자연스러운 호칭으로 시작하고, 필요한 부탁은 부담스럽지 않게 표현한다. 정보가 부족하면 내용을 지어내지 않는다. 예: '지원이 엄마한테 지원이 오늘 기저귀 다 떨어졌으니까 새거 가져와 달라고 말해줘' -> '어머니 안녕하세요. 지원이가 오늘 사용할 기저귀가 모두 떨어졌습니다. 새 기저귀 한 통 보내주시면 감사하겠습니다.'`,
         [{ role: "user", content: `돌봄자 메모: "${text.trim()}"` }],
         400,
       );
@@ -436,6 +483,7 @@ function Journal({ data, role, save }) {
         visibility: guardianOnly ? "guardian" : "all",
         raw: text.trim(),
         structured: parsed.structured || text.trim(),
+        polished: parsed.polished || fallbackPolishedMessage(text.trim()),
         ...(parsed.alert ? { alert: parsed.alert } : {}),
       };
       if (entry.categories.length === 0) entry.categories = ["기타"];
@@ -455,6 +503,9 @@ function Journal({ data, role, save }) {
       <div style={{ background: "#FFFFFF", border: "1px solid #E2E8E0", borderRadius: 18, padding: "14px 16px" }}>
         <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder={`오늘 있었던 일을 편하게 적어 주세요.\n예) "점심 반찬 새로운 거 잘 먹었어요. 낮잠은 안 잤어요."`} rows={3} style={{ width: "100%", border: "none", outline: "none", resize: "none", fontSize: 14.5, lineHeight: 1.6, color: "#22332C", background: "transparent" }} />
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+          <button onClick={toggleVoice} disabled={busy} aria-label="음성으로 입력" style={{ display: "flex", alignItems: "center", gap: 5, background: listening ? "#FBEAE4" : "#F0F3EF", border: "none", borderRadius: 10, padding: "8px 10px", fontSize: 12.5, color: listening ? "#9A4326" : "#2F6B54", fontWeight: 800 }}>
+            <span style={{ fontSize: 15 }}>{listening ? "■" : "●"}</span>{listening ? "듣는 중" : "말로 입력"}
+          </button>
           {role === "parent" && (
             <button onClick={() => setGuardianOnly(!guardianOnly)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", fontSize: 12.5, color: guardianOnly ? "#6B4FA0" : "#8A968C", fontWeight: 700, padding: 0 }}>
               <span style={{ width: 15, height: 15, borderRadius: 5, border: `1.5px solid ${guardianOnly ? "#6B4FA0" : "#B8C2BA"}`, background: guardianOnly ? "#6B4FA0" : "transparent", display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 10 }}>
@@ -468,6 +519,8 @@ function Journal({ data, role, save }) {
           </button>
         </div>
         {busy && <Spinner text="AI가 기록을 인수인계용으로 정리하고 있어요…" />}
+        {listening && <div style={{ marginTop: 6, fontSize: 12.5, color: "#2F6B54" }}>편하게 말씀해 주세요. 끝나면 자동으로 문장으로 정리해 드려요.</div>}
+        {voiceError && <div style={{ marginTop: 6, fontSize: 12.5, color: "#9A4326" }}>{voiceError}</div>}
         {err && <div style={{ marginTop: 6, fontSize: 12.5, color: "#9A4326" }}>{err}</div>}
       </div>
 
@@ -479,6 +532,12 @@ function Journal({ data, role, save }) {
               <span style={{ marginLeft: "auto", fontSize: 11.5, color: "#8A968C" }}>{fmtDate(e.occurredAt)}</span>
             </div>
             <div style={{ fontSize: 14, color: "#33413A", lineHeight: 1.65 }}>{e.structured}</div>
+            {e.polished && (
+              <div style={{ marginTop: 10, background: "#F0F6F1", borderRadius: 12, padding: "10px 12px" }}>
+                <div style={{ fontSize: 11.5, color: "#5C6B60", fontWeight: 800, marginBottom: 4 }}>보호자에게 보낼 문장</div>
+                <div style={{ fontSize: 13.5, color: "#2F5E47", lineHeight: 1.65 }}>{e.polished}</div>
+              </div>
+            )}
             {e.alert && (
               <div style={{ marginTop: 7, fontSize: 12.5, color: "#7A5F1E", background: "#FBF3E4", borderRadius: 9, padding: "6px 10px" }}>
                 주의 · {e.alert}
