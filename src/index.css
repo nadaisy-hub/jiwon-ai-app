@@ -1,0 +1,19 @@
+html, body, #app {
+  margin: 0;
+  min-height: 100%;
+  width: 100%;
+  font-family: 'Apple SD Gothic Neo', 'Pretendard', 'Noto Sans KR', sans-serif;
+  background: #edf1ec;
+}
+
+body {
+  min-height: 100vh;
+}
+
+button, input, textarea {
+  font: inherit;
+}
+
+* {
+  box-sizing: border-box;
+}
