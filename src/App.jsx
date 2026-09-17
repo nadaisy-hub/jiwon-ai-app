@@ -118,16 +118,16 @@ const fallbackClaudeReply = (system, messages) => {
 };
 
 const fallbackPolishedMessage = (raw) => {
-  if (!raw) return "어머니, 안녕하세요. 오늘 전달드릴 특이사항은 없습니다.";
+  if (!raw) return "보호자님, 안녕하세요. 오늘 전달드릴 특이사항은 없습니다. 감사합니다.";
   const diaper = raw.match(/([가-힣]+?)(?:이|가)\s*오늘\s*(?:기저귀가|기저귀)\s*다\s*떨어졌/);
-  if (diaper) return `어머니, 안녕하세요. ${diaper[1]}이 오늘 사용할 기저귀가 모두 떨어졌습니다. 새 기저귀 한 통 보내주시면 감사하겠습니다.`;
+  if (diaper) return `보호자님, 안녕하세요. ${diaper[1]}이가 사용할 기저귀가 모두 소진되었습니다. 새 기저귀 한 통을 보내주시면 감사하겠습니다. 좋은 하루 보내세요.`;
   const cleaned = raw
     .replace(/^(야|저기|있잖아)[,\s]*/g, "")
-    .replace(/말해줘|말씀해줘|전해줘/g, "")
+    .replace(/(?:말해줘|말씀해줘|전해줘)[.?!]?/g, "")
     .replace(/\s+/g, " ")
     .replace(/[.!?]+$/g, "")
     .trim();
-  return `어머니, 안녕하세요. ${cleaned}${cleaned.endsWith("요") ? "" : " 관련하여 확인 부탁드립니다"}. 감사합니다.`;
+  return `보호자님, 안녕하세요. ${cleaned}에 관하여 안내드립니다. 확인해 주시면 감사하겠습니다. 좋은 하루 보내세요.`;
 };
 
 const stripJson = (t) => {
@@ -425,11 +425,10 @@ function Journal({ data, role, save }) {
   const [busy, setBusy] = useState(false);
   const [guardianOnly, setGuardianOnly] = useState(false);
   const [err, setErr] = useState(null);
+  const authorName = { parent: "엄마", teacher: "김선생님", aide: "이지원사님", daycare: "박선생님" }[role];
   const [listening, setListening] = useState(false);
   const [voiceError, setVoiceError] = useState(null);
   const recognitionRef = useRef(null);
-  const authorName = { parent: "엄마", teacher: "김선생님", aide: "이지원사님", daycare: "박선생님" }[role];
-
   const toggleVoice = () => {
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Recognition) {
@@ -466,10 +465,14 @@ function Journal({ data, role, save }) {
     setErr(null);
     try {
       const out = await callClaude(
-        `너는 발달장애 아동 돌봄 기록을 정리하는 도우미다. 돌봄자가 남긴 날것의 메모를 인수인계용과 보호자에게 보낼 메시지로 각각 정리한다.
+        `너는 발달장애 아동 돌봄 기록을 정리하는 도우미다. 돌봄자가 말하거나 적은 날것의 메모를 인수인계용 기록과 보호자에게 바로 보낼 메시지로 각각 새롭게 작성한다.
 반드시 아래 JSON 형식으로만 응답하라. 다른 텍스트, 마크다운 금지.
-        {"categories": ["식사"|"건강"|"행동"|"의사소통"|"수면"|"이동"|"기타" 중 1~3개], "structured": "다른 돌봄자가 읽을 것을 전제로 한 명확한 1~2문장 정리", "polished": "보호자에게 바로 보낼 수 있는 따뜻하고 예의 바른 1~3문장 메시지", "alert": "다른 돌봄자가 즉시 주의해야 할 사항이 있으면 한 문장, 없으면 null"}
-        정리 규칙: 말한 사람의 의도와 사실은 바꾸지 않는다. '야', '말해줘' 같은 구어체와 중언부언은 제거한다. 메시지는 자연스러운 호칭으로 시작하고, 필요한 부탁은 부담스럽지 않게 표현한다. 정보가 부족하면 내용을 지어내지 않는다. 예: '지원이 엄마한테 지원이 오늘 기저귀 다 떨어졌으니까 새거 가져와 달라고 말해줘' -> '어머니 안녕하세요. 지원이가 오늘 사용할 기저귀가 모두 떨어졌습니다. 새 기저귀 한 통 보내주시면 감사하겠습니다.'`,
+      {"categories": ["식사"|"건강"|"행동"|"의사소통"|"수면"|"이동"|"기타" 중 1~3개], "structured": "다른 돌봄자가 읽을 것을 전제로 한 격식 있는 1~2문장 정리", "polished": "보호자에게 바로 보낼 수 있는 자연스럽고 정중한 2~4문장 메시지", "alert": "다른 돌봄자가 즉시 주의해야 할 사항이 있으면 한 문장, 없으면 null"}
+      작성 규칙:
+      - 원문 문장 구조, 말투, 어순을 그대로 유지하거나 직역하지 말고 핵심 의미와 사실만 보존하여 문장을 새로 구성한다.
+      - 반말, 구어체, 명령조, 반복 표현은 모두 제거하고 격식 있는 문어체로 작성한다.
+      - 보호자 메시지는 상황에 맞는 자연스러운 인사말로 시작하고, 필요한 요청이나 안내를 분명하게 전달한 뒤 부담스럽지 않은 감사 또는 마무리 인사로 끝낸다.
+      - 원문에 없는 사실, 감정, 약속, 날짜는 추가하지 않는다. 호칭이 불명확하면 '보호자님'을 사용한다.`,
         [{ role: "user", content: `돌봄자 메모: "${text.trim()}"` }],
         400,
       );
@@ -519,7 +522,7 @@ function Journal({ data, role, save }) {
           </button>
         </div>
         {busy && <Spinner text="AI가 기록을 인수인계용으로 정리하고 있어요…" />}
-        {listening && <div style={{ marginTop: 6, fontSize: 12.5, color: "#2F6B54" }}>편하게 말씀해 주세요. 끝나면 자동으로 문장으로 정리해 드려요.</div>}
+        {listening && <div style={{ marginTop: 6, fontSize: 12.5, color: "#2F6B54" }}>편하게 말씀해 주세요. 말씀을 마치면 격식 있는 문장으로 정리해 드려요.</div>}
         {voiceError && <div style={{ marginTop: 6, fontSize: 12.5, color: "#9A4326" }}>{voiceError}</div>}
         {err && <div style={{ marginTop: 6, fontSize: 12.5, color: "#9A4326" }}>{err}</div>}
       </div>
